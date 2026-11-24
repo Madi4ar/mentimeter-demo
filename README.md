@@ -88,7 +88,7 @@ QR-кодта компьютердің Wi-Fi мекенжайы (мысалы `1
 
 ## Стили (Tailwind CSS)
 
-Интерфейс написан на чистом JavaScript (без фреймворков) и стилизован Tailwind CSS v4. Готовый `public/tailwind.css` уже собран и лежит в архиве, поэтому для запуска ничего устанавливать не нужно. Если вы меняете классы в `public/host.html`, `public/player.html`, `public/ui.js` или `public/i18n.js`, пересоберите стили:
+Интерфейс написан на чистом JavaScript (без фреймворков) и стилизован Tailwind CSS v4. Готовый `public/tailwind.css` уже собран и лежит в архиве, поэтому для запуска ничего устанавливать не нужно. Если вы меняете классы в `public/host.html`, `public/index.html`, `public/ui.js` или `public/i18n.js`, пересоберите стили:
 
 ```
 npm install

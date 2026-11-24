@@ -342,7 +342,7 @@ function lanUrls() {
 
 function serveStatic(req, res, urlPath) {
   let rel = urlPath;
-  if (rel === '/' || rel === '') rel = '/player.html';
+  if (rel === '/' || rel === '') rel = '/index.html';
   if (rel === '/host' || rel === '/host/') rel = '/host.html';
   let file;
   try { file = path.normalize(path.join(PUB, decodeURIComponent(rel))); } catch (e) { res.writeHead(400); return res.end(); }

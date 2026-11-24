@@ -2,7 +2,7 @@
 
 /* Tailwind сам находит классы в этих файлах */
 @source "../public/host.html";
-@source "../public/player.html";
+@source "../public/index.html";
 @source "../public/ui.js";
 @source "../public/i18n.js";
 
