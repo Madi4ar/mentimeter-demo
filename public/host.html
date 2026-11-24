@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STEM AI Innovation — ведущий</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="tailwind.css">
+</head>
+<body>
+
+<div id="login" class="grid h-full place-items-center p-5" hidden>
+  <form id="login-form" class="grid w-[min(420px,100%)] gap-3.5 rounded-[20px] border-2 border-ink bg-white p-7 shadow-[6px_6px_0_var(--color-ink)]">
+    <h1 class="font-display text-2xl leading-[1.12] font-bold">STEM AI Innovation</h1>
+    <p class="m-0 text-muted" data-i18n="login.pin"></p>
+    <input id="pin" class="rounded-xl border-2 border-line bg-white px-[0.9em] py-[0.7em] text-ink placeholder:text-[#8c9ab3] focus:border-blue focus:outline-none" type="password" autocomplete="current-password" placeholder="PIN" required>
+    <div class="min-h-[1.3em] font-extrabold text-bad" id="login-err"></div>
+    <button data-btn="primary" type="submit" data-i18n="login.btn"></button>
+    <div id="login-lang" class="mt-3.5 text-ink"></div>
+  </form>
+</div>
+
+<div id="app" class="relative z-[1] grid h-full grid-rows-[minmax(0,1fr)_auto]" hidden>
+  <main id="stage" class="min-h-0 animate-fade overflow-hidden p-[clamp(16px,2.6vw,44px)] max-[820px]:overflow-y-auto"></main>
+  <footer id="bar" class="flex flex-wrap items-center justify-between gap-3 bg-ink px-[clamp(16px,2.6vw,44px)] py-2.5 text-white"><div id="bar-left" class="flex min-w-0 items-center gap-3 font-bold"></div><div id="bar-right" class="flex flex-wrap items-center justify-end gap-3"></div></footer>
+</div>
+<canvas id="net" class="pointer-events-none fixed inset-0 z-0 size-full opacity-0 transition-opacity duration-[800ms] data-[on]:opacity-100"></canvas>
+<canvas id="confetti" class="pointer-events-none fixed inset-0 z-30 size-full"></canvas>
+
+<script src="i18n.js"></script>
+<script src="ui.js"></script>
+<script src="qrcode.js"></script>
+<script>
+(function () {
+'use strict';
+
+const $ = (s, r) => (r || document).querySelector(s);
+const t = I18N.t;
+const U = window.UI;
+function h(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+const DOT = 'size-2.5 shrink-0 rounded-full ';
+const STAGE = 'min-h-0 animate-fade p-[clamp(16px,2.6vw,44px)] ';
+const OPT = 'group/opt relative flex animate-rise items-center gap-[0.7em] overflow-hidden rounded-[18px] border-[3px] border-ink bg-white px-[clamp(14px,1.8vw,28px)] py-[clamp(12px,2vh,26px)] ' +
+  'min-h-[calc(clamp(64px,12.5vh,140px)*var(--fs))] text-[length:calc(clamp(17px,2.2vw,34px)*var(--fs))] font-extrabold text-ink shadow-[0_6px_0_var(--color-ink)] ' +
+  'transition-[opacity,translate,background-color,border-color,box-shadow] duration-[400ms] last:odd:col-span-full ' +
+  'data-[r=wrong]:opacity-40 data-[r=correct]:-translate-y-0.5 data-[r=correct]:border-good data-[r=correct]:bg-good-bg data-[r=correct]:shadow-[0_6px_0_var(--color-good)]';
+const PBLOCK = { 1: 'bg-orange [--h:32vh]', 2: 'bg-blue [--h:24vh]', 3: 'bg-teal [--h:17vh]' };
+const LET = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const MAXOPT = 8;
+const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let PIN = '';
+try { PIN = sessionStorage.getItem('pin') || ''; } catch (e) { /* нет хранилища */ }
+
+let S = null;          // последнее состояние с сервера
+let offset = 0;        // сдвиг часов сервера
+let quiz = null;       // вопросы (редактор)
+let info = { urls: [], publicUrl: null };
+let forceEditor = false;
+let editorError = '';
+let saveStatus = '';
+let connected = false;
+let cur = null;
+let primaryFn = null;
+let urlIdx = 0;
+let pendingConfirm = null;
+const views = {};
+const stage = $('#stage');
+const timeouts = [];
+let raf = 0;
+
+function later(fn, ms) { const t = setTimeout(fn, ms); timeouts.push(t); return t; }
+function clearLater() { while (timeouts.length) clearTimeout(timeouts.pop()); cancelAnimationFrame(raf); }
+function plural(n, a, b, c) {
+  const m = n % 100, k = n % 10;
+  if (m > 10 && m < 20) return c;
+  if (k === 1) return a;
+  if (k >= 2 && k <= 4) return b;
+  return c;
+}
+function toast(msg) {
+  const t = h('div', 'fixed bottom-[84px] left-1/2 z-40 max-w-[92vw] -translate-x-1/2 animate-rise rounded-xl bg-ink px-[1.2em] py-[0.7em] font-extrabold text-white shadow-[0_10px_30px_rgba(0,0,0,0.3)]', msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+/* ---------- сеть ---------- */
+
+function errMsg(j) { return j && j.code && I18N.has('err.' + j.code) ? t('err.' + j.code, { n: j.n }) : (j && j.error) || ''; }
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'content-type': 'application/json', 'x-pin': PIN },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* пусто */ }
+  if (r.status === 401) { logout(); throw new Error(errMsg(j) || t('err.bad_pin')); }
+  if (!r.ok) throw new Error(errMsg(j) || ('HTTP ' + r.status));
+  return j;
+}
+
+async function doAction(type, extra) {
+  try {
+    await api('/api/host/action', Object.assign({ type }, extra || {}));
+  } catch (e) {
+    toast(e.message);
+    if (type === 'start') { forceEditor = true; editorError = e.message; render(); }
+  }
+}
+
+function logout() {
+  try { sessionStorage.removeItem('pin'); } catch (e) { /* ignore */ }
+  location.reload();
+}
+
+/* ---------- вход ---------- */
+
+function showLogin() {
+  $('#login').hidden = false;
+  $('#app').hidden = true;
+  $('#pin').focus();
+}
+$('#login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  PIN = $('#pin').value;
+  $('#login-err').textContent = '';
+  try {
+    quiz = await api('/api/host/quiz');
+    try { sessionStorage.setItem('pin', PIN); } catch (er) { /* ignore */ }
+    startApp();
+  } catch (er) {
+    $('#login-err').textContent = t('login.bad');
+  }
+});
+
+async function boot() {
+  // автовход: адрес вида /host#pin=1234 (его открывает start.bat), PIN сразу убирается из адресной строки
+  const hm = /[#&]pin=([^&]+)/.exec(location.hash);
+  if (hm) {
+    PIN = decodeURIComponent(hm[1]);
+    try { sessionStorage.setItem('pin', PIN); } catch (e) { /* ignore */ }
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+  }
+  document.title = t('host.title');
+  I18N.apply();
+  document.querySelectorAll('[data-btn]').forEach((b) => { b.className = U.btn(b.dataset.btn); });
+  const paintLoginLang = () => $('#login-lang').replaceChildren(I18N.switcher(() => { document.title = t('host.title'); I18N.apply(); paintLoginLang(); }));
+  paintLoginLang();
+  try { info = await (await fetch('/api/info')).json(); } catch (e) { /* ignore */ }
+  if (PIN) {
+    try { quiz = await api('/api/host/quiz'); startApp(); return; } catch (e) { /* покажем вход */ }
+  }
+  showLogin();
+}
+
+function startApp() {
+  $('#login').hidden = true;
+  $('#app').hidden = false;
+  subscribe();
+  requestAnimationFrame(tick);
+}
+
+// Основной канал: поток событий (SSE). Если он не работает (туннель или прокси его не пропускает),
+// через несколько секунд переходим на опрос раз в секунду.
+function onState(st) {
+  if (st.hb) return;
+  S = st;
+  offset = S.now - Date.now();
+  connected = true;
+  render();
+}
+
+function subscribe() {
+  let es = null;
+  let polling = false;
+  let lastMsg = 0;
+  function startPoll() {
+    if (polling) return;
+    polling = true;
+    if (es) es.close();
+    (async function loop() {
+      let d = 800;
+      try {
+        const r = await fetch('/api/state?role=host', { cache: 'no-store', headers: { 'x-pin': PIN } });
+        if (r.ok) { const j = await r.json(); if (j.poll) d = j.poll; connected = true; onState(j); } else { connected = false; paintDot(); }
+      } catch (e) { connected = false; paintDot(); }
+      setTimeout(loop, d);
+    })();
+  }
+  if (!window.EventSource || (info && info.mode === 'poll') || /[?&]poll=1/.test(location.search)) { startPoll(); return; }
+  es = new EventSource('/events?role=host&pin=' + encodeURIComponent(PIN));
+  es.onopen = () => { connected = true; paintDot(); };
+  es.onmessage = (ev) => { lastMsg = Date.now(); onState(JSON.parse(ev.data)); };
+  es.onerror = () => { connected = false; paintDot(); };
+  setTimeout(() => { if (!lastMsg) startPoll(); }, 5000);
+  setInterval(() => { if (lastMsg && Date.now() - lastMsg > 25000) startPoll(); }, 5000);
+}
+
+function paintDot() { const d = $('#bar-dot'); if (d) d.className = DOT + (connected ? 'bg-[#35d68f]' : 'bg-bad'); }
+
+/* ---------- переключение экранов ---------- */
+
+function viewFor() {
+  if (S.phase === 'lobby') return (forceEditor || !quiz || !quiz.questions.length) ? 'editor' : 'lobby';
+  if (S.phase === 'question' || S.phase === 'reveal') return 'q';
+  return S.phase;
+}
+
+function render() {
+  if (!S) return;
+  const name = viewFor();
+  if (name !== cur) {
+    if (cur && views[cur].leave) views[cur].leave();
+    clearLater();
+    cur = name;
+    stage.className = STAGE + (name === 'editor' ? 'overflow-y-auto' : 'overflow-hidden max-[820px]:overflow-y-auto');
+    stage.replaceChildren();
+    views[name].enter();
+  }
+  views[name].update();
+  renderBar();
+}
+
+/* ---------- язык ---------- */
+
+function relang() {
+  document.title = t('host.title');
+  I18N.apply();
+  editorError = ''; saveStatus = ''; pendingConfirm = null;
+  if (!S) return;
+  if (cur && views[cur].leave) views[cur].leave();
+  clearLater();
+  cur = null;
+  render();
+}
+
+/* ---------- нижняя панель ---------- */
+
+function barCls(cls) {
+  cls = cls || '';
+  const kind = cls.includes('primary') ? 'barPrimary' : cls.includes('danger') ? 'barDanger' : 'bar';
+  return U.btn(kind, cls.includes('sm') ? 'sm' : 'md');
+}
+
+function renderBar() {
+  const L = $('#bar-left');
+  const R = $('#bar-right');
+  L.replaceChildren();
+  R.replaceChildren();
+  const brand = h('span', U.brand);
+  brand.innerHTML = '<svg class="size-6 shrink-0" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M5 18 12 5l7 13M5 18h14"/></g><circle cx="12" cy="5" r="2.6" fill="#f04e0f"/><circle cx="5" cy="18" r="2.6" fill="#7c93ff"/><circle cx="19" cy="18" r="2.6" fill="#35d6c2"/></svg>';
+  brand.append('STEM · AI · Innovation');
+  L.append(brand, h('span', 'h-5 w-px shrink-0 bg-white/30'));
+  const dot = h('span', DOT + (connected ? 'bg-[#35d68f]' : 'bg-bad'));
+  dot.id = 'bar-dot';
+  dot.title = t('bar.link');
+  L.append(dot);
+  const note = h('span');
+  L.append(note);
+  primaryFn = null;
+
+  function btn(label, fn, cls, key) {
+    const b = h('button', barCls(cls), label);
+    if (key) b.append(h('kbd', 'ml-[0.5em] rounded-md bg-white/30 px-[0.45em] py-[0.05em] font-mono text-[0.78em] font-bold', key));
+    b.type = 'button';
+    b.onclick = fn;
+    R.append(b);
+    return b;
+  }
+  function confirmBtn(id, label, fn, cls) {
+    const b = h('button', barCls(cls), pendingConfirm === id ? t('bar.confirm') : label);
+    b.type = 'button';
+    b.onclick = () => {
+      if (pendingConfirm === id) { pendingConfirm = null; fn(); } else {
+        pendingConfirm = id;
+        b.textContent = t('bar.confirm');
+        setTimeout(() => { if (pendingConfirm === id) { pendingConfirm = null; b.textContent = label; } }, 3000);
+      }
+    };
+    R.append(b);
+  }
+  const last = S.qIndex + 1 >= S.total;
+
+  if (cur === 'editor') {
+    const st = h('span', null, saveStatus);
+    st.id = 'save-status';
+    note.replaceWith(st);
+    btn(t('bar.paste'), openImport, 'sm');
+    btn(t('bar.tolobby'), goLobby, 'primary');
+    primaryFn = null;
+  } else if (cur === 'lobby') {
+    note.textContent = t('bar.lobbyNote', { n: S.total, w: t('questions', { n: S.total }) });
+    btn(t('bar.editor'), () => { forceEditor = true; editorError = ''; render(); }, 'sm');
+    if (S.playerCount > 0) confirmBtn('clear', t('bar.clear'), () => doAction('clear'), 'sm danger');
+    const go = () => doAction('start');
+    btn(t('bar.start'), go, 'primary', t('space'));
+    primaryFn = go;
+  } else if (cur === 'q' && S.phase === 'question') {
+    note.textContent = t('bar.qnote', { x: S.qIndex + 1, n: S.total });
+    const f = () => doAction('reveal');
+    btn(t('bar.reveal'), f, 'primary', t('space'));
+    primaryFn = f;
+  } else if (cur === 'q') {
+    note.textContent = t('bar.revealed', { x: S.qIndex + 1, n: S.total });
+    btn(t('bar.board'), () => doAction('board'), '');
+    const f = () => doAction(last ? 'final' : 'next');
+    btn(last ? t('bar.final') : t('bar.next'), f, 'primary', t('space'));
+    primaryFn = f;
+  } else if (cur === 'board') {
+    note.textContent = t('bar.boardNote', { x: S.qIndex + 1, n: S.total });
+    const f = () => doAction(last ? 'final' : 'next');
+    btn(last ? t('bar.final') : t('bar.next'), f, 'primary', t('space'));
+    primaryFn = f;
+  } else if (cur === 'final') {
+    note.textContent = t('bar.over');
+    confirmBtn('clear', t('bar.newroom'), () => doAction('clear'), 'sm danger');
+    const f = () => doAction('reset');
+    btn(t('bar.again'), f, 'primary');
+  }
+  const fs = h('button', U.btn('bar', 'sm'), '⛶');
+  fs.type = 'button';
+  fs.title = t('bar.fs');
+  fs.setAttribute('aria-label', t('bar.fs'));
+  fs.onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  };
+  R.append(I18N.switcher(relang, true), fs);
+}
+
+addEventListener('keydown', (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (/INPUT|TEXTAREA|SELECT|BUTTON/.test(tag)) return;
+  if ((e.code === 'Space' || e.key === 'Enter' || e.key === 'ArrowRight') && primaryFn) {
+    e.preventDefault();
+    primaryFn();
+  }
+});
+
+/* ---------- зал ожидания ---------- */
+
+function joinUrls() {
+  if (info.publicUrl) return [info.publicUrl];
+  const local = ['localhost', '127.0.0.1', '[::1]', '::1'].indexOf(location.hostname) >= 0;
+  if (!local) return [location.origin];
+  return info.urls && info.urls.length ? info.urls : [location.origin];
+}
+
+function paintQr() {
+  const list = joinUrls();
+  const url = list[urlIdx % list.length];
+  $('#lb-url').textContent = url.replace(/^https?:\/\//, '');
+  try {
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    $('#lb-qr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  } catch (e) { $('#lb-qr').textContent = ''; }
+  $('#lb-switch').hidden = list.length < 2;
+  const hostOf = url.replace(/^https?:\/\//, '').replace(/[:/].*$/, '');
+  $('#lb-warn').hidden = !(/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(hostOf) || (hostOf.indexOf('.') < 0));
+}
+
+/* фон зала ожидания: медленно дрейфующая нейросеть из узлов и связей */
+let netRaf = 0;
+function startNet() {
+  const cv = $('#net');
+  const ctx = cv.getContext('2d');
+  let W = 0, H = 0;
+  const fit = () => { W = cv.width = innerWidth; H = cv.height = innerHeight; };
+  fit();
+  addEventListener('resize', fit);
+  const N = Math.round(Math.min(70, Math.max(30, (innerWidth * innerHeight) / 26000)));
+  const nodes = Array.from({ length: N }, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    vx: (Math.random() - 0.5) * 0.35, vy: (Math.random() - 0.5) * 0.35,
+    r: 2 + Math.random() * 3, hot: Math.random() < 0.12,
+  }));
+  $('#net').toggleAttribute('data-on', true);
+  function frame() {
+    ctx.clearRect(0, 0, W, H);
+    for (const n of nodes) {
+      if (!REDUCED) { n.x += n.vx; n.y += n.vy; }
+      if (n.x < 0 || n.x > W) n.vx *= -1;
+      if (n.y < 0 || n.y > H) n.vy *= -1;
+    }
+    const L = 190;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < L) {
+          ctx.strokeStyle = 'rgba(36,71,255,' + (0.22 * (1 - d / L)).toFixed(3) + ')';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+    }
+    for (const n of nodes) {
+      ctx.fillStyle = n.hot ? 'rgba(240,78,15,0.55)' : 'rgba(36,71,255,0.35)';
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.2832); ctx.fill();
+    }
+    if (!REDUCED) netRaf = requestAnimationFrame(frame);
+  }
+  frame();
+  views.lobby._fit = fit;
+}
+function stopNet() {
+  cancelAnimationFrame(netRaf);
+  $('#net').toggleAttribute('data-on', false);
+  if (views.lobby._fit) removeEventListener('resize', views.lobby._fit);
+}
+
+let chips = new Map();
+views.lobby = {
+  enter() {
+    stage.innerHTML = `
+      <section class="relative grid h-full grid-cols-[minmax(300px,0.95fr)_1.05fr] items-center gap-[4vw] max-[820px]:h-auto max-[820px]:grid-cols-1">
+        <div class="grid justify-items-start gap-[clamp(12px,2vh,24px)]">
+          <p class="m-0 font-mono text-[clamp(12px,1.3vw,18px)] font-bold tracking-[0.16em] text-orange uppercase">${t('lobby.eyebrow')}</p>
+          <h1 class="font-display text-[clamp(34px,5vw,80px)] leading-[1.02] font-bold">STEM <span class="text-blue">AI</span> Innovation</h1>
+          <p class="m-0 text-[clamp(15px,1.7vw,24px)] font-bold text-muted">${t('lobby.lead')}</p>
+          <div class="aspect-square w-[min(clamp(190px,23vw,360px),38vh)] rounded-[20px] border-2 border-ink bg-white p-[clamp(10px,1.2vw,18px)] shadow-[6px_6px_0_var(--color-ink)] [&_svg]:block [&_svg]:size-full" id="lb-qr"></div>
+          <button class="cursor-pointer rounded-xl border-2 border-ink bg-white px-[0.8em] py-[0.5em] text-left font-mono text-[clamp(14px,1.6vw,24px)] font-bold break-all text-ink shadow-[0_3px_0_var(--color-ink)]" id="lb-url" type="button" title="${t('lobby.urltitle')}"></button>
+          <p class="m-0 max-w-[30em] rounded-xl border-2 border-orange bg-[#fff3e8] px-[0.9em] py-[0.6em] text-[clamp(13px,1.1vw,17px)] leading-[1.35] font-bold text-[#7a2a00]" id="lb-warn" hidden>${t('lobby.warn')}</p>
+          <p class="m-0 text-[clamp(15px,1.7vw,24px)] font-bold text-muted" id="lb-switch" hidden>${t('lobby.switch')}</p>
+        </div>
+        <div class="grid min-w-0 content-center gap-4">
+          <div class="flex items-baseline gap-[0.5em]"><b class="font-display text-[clamp(56px,9vw,140px)] leading-none font-bold text-orange tabular-nums" id="lb-count">0</b><span class="text-[clamp(16px,2vw,30px)] font-extrabold" id="lb-word"></span></div>
+          <div class="flex max-h-[54vh] flex-wrap content-start gap-2.5 overflow-hidden" id="lb-chips"></div>
+          <p class="m-0 text-[clamp(15px,1.7vw,22px)] font-bold text-muted" id="lb-empty">${t('lobby.empty')}</p>
+        </div>
+      </section>`;
+    chips = new Map();
+    urlIdx = 0;
+    $('#lb-url').onclick = () => { urlIdx++; paintQr(); };
+    paintQr();
+    startNet();
+  },
+  leave() { stopNet(); },
+  update() {
+    const list = S.players || [];
+    $('#lb-count').textContent = S.playerCount;
+    $('#lb-word').textContent = t('participants', { n: S.playerCount });
+    $('#lb-empty').hidden = S.playerCount > 0;
+    const wrap = $('#lb-chips');
+    const ids = new Set(list.map((p) => p.id));
+    for (const [id, el] of chips) if (!ids.has(id)) { el.remove(); chips.delete(id); }
+    for (const p of list) {
+      if (chips.has(p.id)) continue;
+      const c = h('span', 'group inline-flex max-w-full animate-pop items-center gap-[0.4em] rounded-full border-2 border-ink bg-white py-[0.35em] pr-[0.5em] pl-4 text-[clamp(14px,1.6vw,24px)] font-extrabold');
+      c.append(h('span', 'truncate', p.name));
+      const x = h('button', 'size-[1.4em] cursor-pointer rounded-full bg-transparent leading-none font-extrabold text-ink opacity-0 group-hover:bg-ink/10 group-hover:opacity-100 focus-visible:bg-ink/10 focus-visible:opacity-100', '×');
+      x.type = 'button';
+      x.title = t('kick');
+      x.setAttribute('aria-label', t('kick.named', { name: p.name }));
+      x.onclick = () => doAction('kick', { id: p.id });
+      c.append(x);
+      wrap.append(c);
+      chips.set(p.id, c);
+    }
+  },
+};
+
+/* ---------- редактор вопросов ---------- */
+
+let saveT = 0;
+function scheduleSave() {
+  saveStatus = t('save.ing');
+  const st = $('#save-status'); if (st) st.textContent = saveStatus;
+  clearTimeout(saveT);
+  saveT = setTimeout(async () => {
+    try { await api('/api/host/quiz', quiz); saveStatus = t('save.ok'); } catch (e) { saveStatus = t('save.fail') + e.message; }
+    const s2 = $('#save-status'); if (s2) s2.textContent = saveStatus;
+  }, 600);
+}
+
+function goLobby() {
+  const err = validateLocal();
+  clearTimeout(saveT);
+  api('/api/host/quiz', quiz).then(() => {
+    if (err) { editorError = err; renderEditor(); toast(err); return; }
+    forceEditor = false; editorError = ''; saveStatus = '';
+    render();
+  }).catch((e) => toast(e.message));
+}
+
+function validateLocal() {
+  if (!quiz.questions.length) return t('val.none');
+  for (let i = 0; i < quiz.questions.length; i++) {
+    const q = quiz.questions[i];
+    const n = i + 1;
+    if (!q.text.trim()) return t('val.notext', { n });
+    if (q.options.filter((o) => o.trim()).length < 2) return t('val.few', { n });
+    if (q.correct < 0 || !q.options[q.correct].trim()) return t('val.nocorrect', { n });
+  }
+  return '';
+}
+
+function confirmOnce(b, label, fn) {
+  let armed = false;
+  b.onclick = () => {
+    if (armed) { fn(); return; }
+    armed = true;
+    b.textContent = t('ed.sure');
+    setTimeout(() => { armed = false; b.textContent = label; }, 2500);
+  };
+}
+
+function renderEditor() {
+  const box = $('#ed-list');
+  if (!box) return;
+  box.replaceChildren();
+  const eb = $('#ed-err');
+  eb.hidden = !editorError;
+  eb.textContent = editorError;
+
+  quiz.questions.forEach((q, qi) => {
+    const card = h('div', 'grid animate-rise gap-3 rounded-[18px] border-2 border-ink bg-white p-[18px] shadow-[0_4px_0_var(--color-ink)]');
+    const head = h('div', 'flex flex-wrap items-center gap-2');
+    head.append(h('span', 'font-mono font-bold tracking-[0.06em] text-orange uppercase', t('ed.qn', { n: qi + 1 })), h('span', 'flex-1'));
+
+    const secL = h('label', 'flex items-center gap-2 text-[0.92rem] font-bold');
+    const sec = h('input', U.field + ' w-[5.2em] px-[0.6em] py-[0.4em]');
+    sec.type = 'number'; sec.min = 5; sec.max = 180; sec.value = q.seconds;
+    sec.id = 'sec-' + qi;
+    sec.oninput = () => { const v = Math.round(Number(sec.value)); if (v >= 5 && v <= 180) { q.seconds = v; scheduleSave(); } };
+    sec.onblur = () => { sec.value = q.seconds; };
+    secL.append(t('ed.time'), sec);
+    head.append(secL);
+
+    const mk = (label, title, fn) => { const b = h('button', U.btn('default', 'sm'), label); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); b.onclick = fn; head.append(b); return b; };
+    const move = (d) => () => { const j = qi + d; if (j < 0 || j >= quiz.questions.length) return; [quiz.questions[qi], quiz.questions[j]] = [quiz.questions[j], quiz.questions[qi]]; renderEditor(); scheduleSave(); };
+    if (qi > 0) mk('↑', t('ed.up'), move(-1));
+    if (qi < quiz.questions.length - 1) mk('↓', t('ed.down'), move(1));
+    const del = mk(t('ed.del'), t('ed.delq'), null);
+    confirmOnce(del, t('ed.del'), () => { quiz.questions.splice(qi, 1); renderEditor(); scheduleSave(); });
+    card.append(head);
+
+    const ta = h('textarea', U.field + ' ' + U.fieldFull + ' min-h-[66px] resize-y');
+    ta.id = 'qt-' + qi;
+    ta.placeholder = t('ed.qph');
+    ta.value = q.text;
+    ta.oninput = () => { q.text = ta.value; scheduleSave(); };
+    card.append(ta);
+
+    const rows = [];
+    q.options.forEach((o, oi) => {
+      const row = h('div', 'group/row flex items-center gap-2');
+      row.toggleAttribute('data-correct', q.correct === oi);
+      row.append(h('span', 'grid h-[2.1em] min-w-[2.4em] shrink-0 place-items-center rounded-[10px] px-[0.3em] font-display text-[0.8rem] font-bold text-white ' + U.optBg[oi], LET[oi] + ')'));
+      const inp = h('input', U.field + ' ' + U.fieldFull + ' min-w-0 flex-1');
+      inp.id = `o-${qi}-${oi}`;
+      inp.placeholder = t('ed.oph', { l: LET[oi] });
+      inp.maxLength = 400;
+      inp.value = o;
+      inp.oninput = () => { q.options[oi] = inp.value; scheduleSave(); };
+      row.append(inp);
+      const lab = h('label', 'flex cursor-pointer items-center gap-1.5 rounded-[10px] border-2 border-line bg-white px-[0.8em] py-[0.55em] text-[0.85rem] font-extrabold whitespace-nowrap group-data-[correct]/row:border-good group-data-[correct]/row:bg-good group-data-[correct]/row:text-white');
+      const rd = h('input', 'm-0 grid size-[1.15em] appearance-none place-items-center rounded-full border-2 border-current bg-transparent after:size-[0.5em] after:scale-0 after:rounded-full after:bg-current after:content-[\'\'] checked:after:scale-100');
+      rd.type = 'radio'; rd.name = 'correct-' + qi; rd.checked = q.correct === oi;
+      rd.onchange = () => { q.correct = oi; rows.forEach((r, i) => r.toggleAttribute('data-correct', i === oi)); scheduleSave(); };
+      lab.append(rd, t('ed.ok'));
+      row.append(lab);
+      if (q.options.length > 2) {
+        const rm = h('button', U.btn('default', 'sm'), '✕');
+        rm.type = 'button'; rm.title = t('ed.rm'); rm.setAttribute('aria-label', t('ed.rma', { l: LET[oi] }));
+        rm.onclick = () => {
+          q.options.splice(oi, 1);
+          if (q.correct === oi) q.correct = -1; else if (q.correct > oi) q.correct--;
+          renderEditor(); scheduleSave();
+        };
+        row.append(rm);
+      }
+      rows.push(row);
+      card.append(row);
+    });
+    if (q.options.length < MAXOPT) {
+      const add = h('button', U.btn('default', 'sm') + ' justify-self-start', t('ed.addopt'));
+      add.type = 'button';
+      add.onclick = () => { q.options.push(''); renderEditor(); scheduleSave(); };
+      card.append(add);
+    }
+    box.append(card);
+  });
+  if (!quiz.questions.length) box.append(h('p', 'm-0 text-[clamp(15px,1.7vw,22px)] font-bold text-muted', t('ed.empty')));
+}
+
+function addQuestion() {
+  quiz.questions.push({ text: '', options: ['', '', '', ''], correct: -1, seconds: 20 });
+  renderEditor();
+  scheduleSave();
+  const i = quiz.questions.length - 1;
+  const ta = $('#qt-' + i);
+  if (ta) { ta.focus(); ta.scrollIntoView({ block: 'center', behavior: REDUCED ? 'auto' : 'smooth' }); }
+}
+
+function parseBulk(t) {
+  const blocks = t.replace(/\r/g, '').split(/\n\s*\n/)
+    .map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
+    .filter((b) => b.length >= 3);
+  return blocks.map((lines) => {
+    const text = lines[0].replace(/^\d+[.)]\s*/, '');
+    const options = [];
+    let correct = -1;
+    lines.slice(1, MAXOPT + 1).forEach((l) => {
+      let ok = false;
+      if (/^[+*]/.test(l)) { ok = true; l = l.replace(/^[+*]\s*/, ''); }
+      l = l.replace(/^[A-HА-Г][.)]\s+/i, '');
+      if (ok && correct < 0) correct = options.length;
+      options.push(l);
+    });
+    while (options.length < 2) options.push('');
+    return { text, options, correct, seconds: 20 };
+  });
+}
+
+function openImport() {
+  const m = h('div', 'fixed inset-0 z-20 grid place-items-center bg-ink/60 p-4');
+  m.innerHTML = `<div class="grid max-h-[94vh] w-[min(720px,100%)] gap-3 overflow-auto rounded-[20px] border-2 border-ink bg-white p-5" role="dialog" aria-modal="true" aria-labelledby="im-t">
+    <h3 class="font-display font-bold leading-[1.12]" id="im-t">${t('imp.title')}</h3>
+    <p class="m-0 opacity-85">${t('imp.help')}</p>
+    <pre class="m-0 rounded-[10px] bg-bg px-3 py-2.5 font-mono text-[0.85rem] whitespace-pre-wrap"></pre>
+    <textarea class="${U.field} ${U.fieldFull} min-h-[200px]" id="im-text" placeholder="${t('imp.ph')}"></textarea>
+    <p class="${U.err}" id="im-err"></p>
+    <div class="flex justify-end gap-2.5">
+      <button class="${U.btn('default')}" type="button" id="im-cancel">${t('imp.cancel')}</button>
+      <button class="${U.btn('primary')}" type="button" id="im-ok">${t('imp.ok')}</button>
+    </div></div>`;
+  document.body.append(m);
+  $('pre', m).textContent = t('imp.ex');
+  const close = () => m.remove();
+  $('#im-text', m).focus();
+  $('#im-cancel', m).onclick = close;
+  m.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  $('#im-ok', m).onclick = () => {
+    const res = parseBulk($('#im-text', m).value);
+    if (!res.length) { $('#im-err', m).textContent = t('imp.err'); return; }
+    quiz.questions.push(...res);
+    const noCorrect = res.filter((q) => q.correct < 0).length;
+    renderEditor(); scheduleSave(); close();
+    toast(t('imp.added', { n: res.length }) + (noCorrect ? t('imp.nocorrect', { n: noCorrect }) : ''));
+  };
+}
+
+views.editor = {
+  enter() {
+    stage.innerHTML = `
+      <section class="mx-auto grid max-w-[980px] gap-4 pb-10">
+        <div>
+          <h1 class="font-display text-[clamp(22px,3vw,36px)] leading-[1.12] font-bold">${t('ed.title')}</h1>
+          <p class="mt-[0.5em] font-bold text-muted">${t('ed.hint')}</p>
+        </div>
+        <label class="flex items-center gap-2.5 font-bold"><input class="size-[1.2em] accent-blue" type="checkbox" id="ed-auto"> ${t('ed.auto')}</label>
+        <div class="rounded-xl border-2 border-bad bg-[#ffe3e7] px-4 py-[0.7em] font-extrabold text-bad" id="ed-err" hidden></div>
+        <div id="ed-list" class="grid gap-3.5"></div>
+        <button class="${U.btn('default')}" type="button" id="ed-add">${t('ed.add')}</button>
+      </section>`;
+    $('#ed-auto').checked = quiz.autoEnd !== false;
+    $('#ed-auto').onchange = (e) => { quiz.autoEnd = e.target.checked; scheduleSave(); };
+    $('#ed-add').onclick = addQuestion;
+    renderEditor();
+  },
+  update() {},
+};
+
+/* ---------- вопрос и ответ ---------- */
+
+let builtQ = -1;
+views.q = {
+  enter() {
+    stage.innerHTML = `
+      <section class="group/root grid h-full grid-rows-[auto_auto_1fr_auto] gap-[clamp(12px,2.2vh,30px)] [--fs:1] [&[data-measuring]]:animate-none! [&[data-measuring]_*]:animate-none!" id="q-sec-root">
+        <div class="flex items-center justify-between gap-3">
+          <span class="rounded-full border-2 border-ink bg-white px-4 py-[0.3em] font-mono text-[clamp(13px,1.4vw,21px)] font-bold" id="q-num"></span>
+          <span class="rounded-full border-2 border-ink bg-white px-4 py-[0.3em] font-mono text-[clamp(13px,1.4vw,21px)] font-bold" id="q-info"></span>
+          <span class="flex-1"></span>
+          <div class="min-w-[2.4ch] text-right font-mono text-[clamp(34px,5vw,76px)] leading-none font-bold text-ink tabular-nums" id="q-timer"><span id="q-sec"></span><small class="ml-[0.2em] text-[0.4em] text-muted">${t('q.sec')}</small></div>
+        </div>
+        <div class="${U.tickBar} h-[clamp(16px,2.2vh,26px)] rounded-lg" id="q-tbar"><i class="block h-full origin-left bg-orange" id="q-bar"></i></div>
+        <h2 class="animate-rise self-center font-display text-[length:calc(clamp(24px,3.9vw,60px)*var(--fs))] leading-[1.12] font-bold text-balance" id="q-text"></h2>
+        <div class="grid grid-cols-2 gap-[clamp(12px,1.6vw,24px)] pb-2 max-[820px]:grid-cols-1" id="q-opts"></div>
+      </section>`;
+    builtQ = -1;
+  },
+  update() {
+    const q = S.question;
+    const root = $('#q-sec-root');
+    if (builtQ !== S.qIndex) {
+      builtQ = S.qIndex;
+      $('#q-num').textContent = t('q.num', { x: S.qIndex + 1, n: S.total });
+      $('#q-tbar').style.setProperty('--n', q.seconds <= 30 ? q.seconds : Math.round(q.seconds / 5));
+      const qt = $('#q-text');
+      qt.textContent = q.text;
+      qt.style.animation = 'none'; void qt.offsetWidth; qt.style.animation = '';
+      const box = $('#q-opts');
+      box.replaceChildren();
+      q.options.forEach((o, i) => {
+        const e = h('div', OPT);
+        e.style.animationDelay = (0.12 + i * 0.08) + 's';
+        e.append(h('span', 'grid h-[1.8em] min-w-[1.9em] shrink-0 place-items-center rounded-xl px-[0.3em] font-display text-[0.85em] text-white ' + U.optBg[i], LET[i] + ')'), h('span', 'min-w-0 flex-1 leading-[1.2] [overflow-wrap:anywhere]', o), h('span', 'ocount hidden font-mono text-[0.9em] font-bold group-data-[revealed]/root:block'), h('span', 'hidden size-[1.6em] shrink-0 place-items-center rounded-full bg-good text-[0.8em] text-white group-data-[r=correct]/opt:grid', '✓'), h('i', 'obar absolute bottom-0 left-0 h-[0.45em] w-0 opacity-45 transition-[width] duration-1000 ease-[cubic-bezier(0.2,0.8,0.2,1)] ' + U.optBg[i]));
+        box.append(e);
+      });
+      fitQ();
+    }
+    const rev = S.phase === 'reveal';
+    root.toggleAttribute('data-revealed', rev);
+    const opts = $('#q-opts').children;
+    if (rev) {
+      const sum = Math.max(1, S.counts.reduce((a, b) => a + b, 0));
+      for (let i = 0; i < opts.length; i++) {
+        const e = opts[i];
+        e.dataset.r = i === S.correct ? 'correct' : 'wrong';
+        e.querySelector('.ocount').textContent = S.counts[i];
+        const w = (S.counts[i] / sum * 100) + '%';
+        requestAnimationFrame(() => { e.querySelector('.obar').style.width = w; });
+      }
+      $('#q-info').textContent = t('q.correct', { a: S.correctCount, c: S.playerCount });
+      $('#q-sec').textContent = '✓';
+      $('#q-timer small').hidden = true;
+      $('#q-timer').classList.remove('text-bad'); $('#q-timer').classList.add('text-ink');
+      $('#q-bar').style.transform = 'scaleX(0)';
+    } else {
+      for (let i = 0; i < opts.length; i++) {
+        delete opts[i].dataset.r;
+        opts[i].querySelector('.obar').style.width = '0';
+      }
+      $('#q-info').textContent = t('q.answered', { a: S.answered, c: S.connected });
+      $('#q-timer small').hidden = false;
+    }
+  },
+};
+
+// длинные вопросы и ответы: уменьшаем шрифт, пока всё не поместится на экран
+function fitQ() {
+  const root = $('#q-sec-root');
+  if (!root) return;
+  root.toggleAttribute('data-measuring', true);
+  let fs = 1;
+  root.style.setProperty('--fs', fs);
+  while (fs > 0.34 && root.scrollHeight > root.clientHeight + 1) {
+    fs = Math.round((fs - 0.04) * 100) / 100;
+    root.style.setProperty('--fs', fs);
+  }
+  root.toggleAttribute('data-measuring', false);
+}
+addEventListener('resize', () => { if (cur === 'q') fitQ(); });
+
+function tick() {
+  if (S && cur === 'q' && S.phase === 'question' && S.question) {
+    const rem = Math.max(0, S.endsAt - (Date.now() + offset));
+    const total = S.question.seconds * 1000;
+    const sec = $('#q-sec');
+    if (sec) {
+      sec.textContent = Math.ceil(rem / 1000);
+      $('#q-bar').style.transform = 'scaleX(' + (rem / total) + ')';
+      $('#q-timer').classList.toggle('text-bad', rem < 5000);
+      $('#q-timer').classList.toggle('text-ink', rem >= 5000);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ---------- рейтинг ---------- */
+
+function countUp(el, from, to, dur) {
+  if (from === to || REDUCED) { el.textContent = to; return; }
+  const t0 = performance.now();
+  (function f(t) {
+    const k = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(from + (to - from) * e);
+    if (k < 1) raf = requestAnimationFrame(f);
+  })(t0);
+}
+
+let boardKey = null;
+views.board = {
+  enter() {
+    stage.innerHTML = `
+      <section class="flex h-full flex-col gap-[clamp(8px,1.6vh,20px)]">
+        <div><h2 class="font-display text-[clamp(26px,3.6vw,54px)] leading-[1.12] font-bold">${t('bd.title')}</h2><p class="mt-[0.4em] mb-0 font-mono text-[clamp(13px,1.4vw,20px)] font-bold text-muted" id="bd-sub"></p></div>
+        <div class="relative mx-auto w-[min(1100px,100%)] flex-none [--rh:clamp(50px,7.6vh,88px)]" id="bd-rows"></div>
+        <p class="m-0 text-center font-bold text-muted" id="bd-more"></p>
+      </section>`;
+    boardKey = null;
+  },
+  update() {
+    const key = S.phase + ':' + S.qIndex;
+    if (boardKey === key) return;
+    boardKey = key;
+    const b = S.board;
+    const rows = b.rows;
+    const n = rows.length;
+    $('#bd-sub').textContent = t('bd.sub', { x: S.qIndex + 1, n: S.total });
+    $('#bd-more').textContent = b.total > n ? t('bd.more', { n: b.total - n, w: t('participants', { n: b.total - n }) }) : '';
+    const box = $('#bd-rows');
+    box.style.height = `calc(var(--rh) * ${Math.max(n, 1)})`;
+    const maxScore = Math.max(1, ...rows.map((r) => r.score));
+    const els = rows.map((r) => {
+      const e = h('div', 'group absolute inset-x-0 top-0 flex h-[calc(var(--rh)-10px)] translate-y-[calc(var(--i)*var(--rh))] items-center overflow-hidden rounded-[14px] border-2 border-ink bg-white [transition:translate_0.95s_cubic-bezier(0.3,0.9,0.25,1),opacity_0.5s_ease] data-[top=1]:border-orange data-[top=1]:shadow-[0_0_0_2px_var(--color-orange)]');
+      const fill = h('i', 'absolute inset-y-0 left-0 w-0 bg-blue/15 transition-[width] duration-[1300ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] group-data-[top=1]:bg-orange/20');
+      const rk = h('span', 'relative w-[2.3em] text-center font-mono text-[clamp(18px,2.5vw,38px)] font-bold text-muted group-data-[top=1]:text-orange group-data-[top=2]:text-blue group-data-[top=3]:text-teal', String(r.prevRank));
+      const nm = h('span', 'relative min-w-0 flex-1 truncate text-[clamp(17px,2.3vw,36px)] font-extrabold', r.name);
+      const dl = h('span', 'relative mr-[0.7em] translate-y-1.5 rounded-lg bg-good px-[0.5em] py-[0.1em] font-mono text-[clamp(13px,1.7vw,25px)] font-bold text-white opacity-0 transition duration-500 empty:hidden data-[on]:translate-y-0 data-[on]:opacity-100', r.score > r.prevScore ? '+' + (r.score - r.prevScore) : '');
+      const sc = h('span', 'relative min-w-[3em] pr-[0.6em] text-right font-mono text-[clamp(20px,2.8vw,44px)] font-bold tabular-nums', String(r.prevScore));
+      e.append(fill, rk, nm, dl, sc);
+      e.style.setProperty('--i', String(Math.min(r.prevRank - 1, n)));
+      if (r.prevRank > n) e.style.opacity = '0';
+      fill.style.width = (r.prevScore / maxScore * 100) + '%';
+      box.append(e);
+      return { e, fill, rk, dl, sc, r };
+    });
+    void box.offsetHeight;
+    later(() => {
+      els.forEach(({ e, fill, rk, dl, sc, r }) => {
+        e.style.setProperty('--i', String(r.rank - 1));
+        e.style.opacity = '1';
+        if (r.rank <= 3) e.dataset.top = String(r.rank); else delete e.dataset.top;
+        rk.textContent = r.rank;
+        fill.style.width = (r.score / maxScore * 100) + '%';
+        countUp(sc, r.prevScore, r.score, 1200);
+        if (r.score > r.prevScore) dl.toggleAttribute('data-on', true);
+      });
+    }, REDUCED ? 0 : 900);
+  },
+  leave() { clearLater(); },
+};
+
+/* ---------- итоги ---------- */
+
+function confetti() {
+  if (REDUCED) return;
+  const cv = $('#confetti');
+  cv.width = innerWidth; cv.height = innerHeight;
+  const ctx = cv.getContext('2d');
+  const cols = ['#f04e0f', '#2447ff', '#008f80', '#d6307f', '#0a1733', '#ffb020'];
+  const P = Array.from({ length: 200 }, () => ({
+    x: Math.random() * cv.width, y: -20 - Math.random() * cv.height * 0.6,
+    vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 4.5, s: 6 + Math.random() * 9,
+    r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3, c: cols[(Math.random() * cols.length) | 0],
+  }));
+  const t0 = performance.now();
+  (function f(t) {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    let alive = false;
+    for (const p of P) {
+      p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      if (p.y < cv.height + 20) alive = true;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+      ctx.fillStyle = p.c; ctx.fillRect(-p.s / 2, -p.s / 3, p.s, p.s * 0.6);
+      ctx.restore();
+    }
+    if (alive && t - t0 < 9000) requestAnimationFrame(f); else ctx.clearRect(0, 0, cv.width, cv.height);
+  })(t0);
+}
+
+let finalDone = false;
+views.final = {
+  enter() {
+    stage.innerHTML = `
+      <section class="flex h-full flex-col items-center gap-[clamp(8px,1.6vh,20px)]">
+        <h2 class="text-center font-display text-[clamp(26px,3.8vw,58px)] leading-[1.12] font-bold">${t('fn.title')}</h2>
+        <div class="mt-auto grid w-[min(1000px,100%)] items-end gap-[clamp(8px,1.6vw,24px)]" id="fn-pod"></div>
+        <div class="grid w-[min(1000px,100%)] grid-cols-2 gap-x-[clamp(12px,2vw,28px)] gap-y-1.5 max-[820px]:grid-cols-1" id="fn-rest"></div>
+      </section>`;
+    finalDone = false;
+  },
+  update() {
+    if (finalDone) return;
+    finalDone = true;
+    const rows = S.board.rows;
+    const pod = $('#fn-pod');
+    if (!rows.length) { pod.replaceWith(h('p', 'm-0 text-[clamp(15px,1.7vw,22px)] font-bold text-muted', t('fn.none'))); return; }
+    const top = rows.slice(0, 3);
+    const order = top.length === 1 ? [0] : top.length === 2 ? [1, 0] : [1, 0, 2];
+    pod.style.gridTemplateColumns = `repeat(${order.length}, minmax(0, 1fr))`;
+    const cols = {};
+    order.forEach((idx) => {
+      const r = top[idx];
+      const c = h('div', 'group flex min-w-0 flex-col items-center justify-end text-center');
+      c.append(
+        h('div', 'translate-y-2 px-[0.3em] text-[clamp(16px,2.3vw,36px)] leading-[1.15] font-extrabold opacity-0 transition duration-[600ms] [overflow-wrap:anywhere] group-data-[shown]:translate-y-0 group-data-[shown]:opacity-100', r.name),
+        h('div', 'mt-[0.2em] mb-[0.4em] font-mono text-[clamp(18px,2.4vw,36px)] font-bold text-orange tabular-nums opacity-0 transition-opacity delay-150 duration-[600ms] group-data-[shown]:opacity-100', r.score + ' ' + t('pts', { n: r.score })),
+        h('div', 'grid h-0 w-full items-start justify-items-center overflow-hidden rounded-t-2xl border-[3px] border-b-0 border-ink pt-[0.1em] font-display text-[clamp(34px,6vw,96px)] font-black text-white transition-[height] duration-1000 ease-[cubic-bezier(0.2,0.9,0.2,1)] group-data-[on]:h-(--h) ' + PBLOCK[r.rank], String(r.rank)));
+      pod.append(c);
+      cols[r.rank] = c;
+    });
+    const step = (rank, at) => {
+      const c = cols[rank];
+      if (!c) return;
+      later(() => { c.toggleAttribute('data-on', true); }, REDUCED ? 0 : at);
+      later(() => { c.toggleAttribute('data-shown', true); }, REDUCED ? 0 : at + 800);
+    };
+    step(3, 400); step(2, 1700); step(1, 3000);
+    if (cols[1]) later(confetti, REDUCED ? 0 : 3900);
+    const rest = $('#fn-rest');
+    rows.slice(3).forEach((r, i) => {
+      const e = h('div', 'flex min-w-0 animate-rise items-center gap-[0.7em] rounded-xl border-2 border-ink bg-white px-[0.8em] py-[0.3em] text-[clamp(13px,1.5vw,22px)] font-extrabold');
+      e.style.animationDelay = ((REDUCED ? 0 : 4.4) + i * 0.12) + 's';
+      e.append(h('b', 'w-[1.8em] font-mono font-bold text-muted', String(r.rank)), h('span', 'min-w-0 flex-1 truncate', r.name), h('em', 'font-mono font-bold text-orange not-italic tabular-nums', String(r.score)));
+      rest.append(e);
+    });
+  },
+  leave() { clearLater(); const cv = $('#confetti'); cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); },
+};
+
+boot();
+})();
+</script>
+</body>
+</html>

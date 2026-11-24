@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef3fa">
+<title>STEM AI Innovation</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="tailwind.css">
+</head>
+<body>
+<div class="mx-auto flex min-h-dvh max-w-[560px] flex-col gap-4 pt-[max(18px,env(safe-area-inset-top))] pr-[max(16px,env(safe-area-inset-right))] pb-[max(18px,env(safe-area-inset-bottom))] pl-[max(16px,env(safe-area-inset-left))]">
+  <div class="inline-flex items-center gap-2 font-mono text-[0.78rem] font-bold tracking-[0.1em] text-ink uppercase"><svg class="size-6 shrink-0" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="#0a1733" stroke-width="1.6" stroke-linecap="round"><path d="M5 18 12 5l7 13M5 18h14"/></g><circle cx="12" cy="5" r="2.6" fill="#f04e0f"/><circle cx="5" cy="18" r="2.6" fill="#2447ff"/><circle cx="19" cy="18" r="2.6" fill="#008f80"/></svg>STEM · AI · Innovation</div>
+  <div id="lang-slot" class="self-start"></div>
+  <div class="rounded-[10px] bg-bad px-[0.9em] py-[0.5em] text-[0.9rem] font-extrabold text-white" id="conn" hidden data-i18n="pl.conn"></div>
+  <main id="screen" class="flex min-h-0 flex-1 animate-fade flex-col gap-4"></main>
+</div>
+
+<script src="i18n.js"></script>
+<script src="ui.js"></script>
+<script>
+(function () {
+'use strict';
+
+const $ = (s, r) => (r || document).querySelector(s);
+const t = I18N.t;
+function h(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+const LET = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const U = window.UI;
+// классы Tailwind для повторяющихся элементов
+const K = {
+  center: 'flex flex-1 flex-col justify-center gap-3.5',
+  h1: U.h1 + ' text-[clamp(26px,8vw,38px)]',
+  muted: 'm-0 font-bold text-muted',
+  kicker: 'm-0 font-mono text-[0.8rem] font-bold tracking-[0.14em] text-orange uppercase',
+  input: 'w-full rounded-[14px] border-2 border-ink bg-white px-4 py-[0.95em] text-[1.1rem] font-bold text-ink shadow-[0_3px_0_var(--color-ink)] placeholder:font-medium placeholder:text-[#8c9ab3] focus:border-blue focus:shadow-[0_3px_0_var(--color-blue)] focus:outline-none',
+  err: U.err + ' m-0',
+  form: 'grid gap-3',
+  dots: 'flex gap-2',
+  dot: ['size-3 animate-dot rounded-[3px] bg-blue', 'size-3 animate-dot rounded-[3px] bg-orange [animation-delay:0.15s]', 'size-3 animate-dot rounded-[3px] bg-teal [animation-delay:0.3s]'],
+  qtop: 'flex items-center justify-between gap-2.5 font-mono font-bold',
+  timer: 'min-w-[2ch] text-right text-[2.2rem] leading-none font-bold tabular-nums',
+  tbar: U.tickBar + ' h-[18px] rounded-[7px]',
+  tfill: 'block h-full origin-left bg-orange',
+  qtext: 'my-1 font-display text-[clamp(18px,5.2vw,24px)] leading-tight font-bold [overflow-wrap:anywhere]',
+  status: 'm-0 min-h-[1.5em] text-center font-extrabold',
+  card: 'grid animate-pop justify-items-center gap-2.5 rounded-[20px] border-2 border-ink p-[22px] text-center shadow-[0_5px_0_var(--color-ink)]',
+  icon: 'grid size-16 place-items-center rounded-2xl font-display text-[1.8rem] font-black',
+  sub: 'm-0 font-bold',
+  pts: 'font-mono text-[clamp(44px,15vw,68px)] leading-none font-bold tabular-nums',
+  stats: 'grid grid-cols-2 gap-3',
+  stat: 'rounded-2xl border-2 border-ink bg-white p-3.5 text-center',
+  statB: 'block font-mono text-[1.7rem] leading-[1.2] font-bold text-blue tabular-nums',
+  statS: 'text-[0.85rem] font-bold text-muted',
+  place: 'font-display text-[clamp(72px,28vw,140px)] leading-none font-black text-orange tabular-nums',
+};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } },
+};
+function plural(n, a, b, c) {
+  const m = n % 100, k = n % 10;
+  if (m > 10 && m < 20) return c;
+  if (k === 1) return a;
+  if (k >= 2 && k <= 4) return b;
+  return c;
+}
+
+let id = store.get('quiz.id');
+let S = null;
+let offset = 0;
+let es = null;
+let curKey = null;
+let triedRejoin = false;
+let locked = false;
+const screen = $('#screen');
+
+/* ---------- вход ---------- */
+
+function showJoin(msg) {
+  curKey = 'join';
+  screen.replaceChildren();
+  const c = h('div', K.center);
+  c.append(h('h1', K.h1, t('pl.joinTitle')), h('p', K.muted, t('pl.joinSub')));
+  const f = h('form', K.form);
+  const a = h('input', K.input); a.id = 'first'; a.placeholder = t('pl.first'); a.autocomplete = 'given-name'; a.maxLength = 40; a.required = true;
+  const b = h('input', K.input); b.id = 'last'; b.placeholder = t('pl.last'); b.autocomplete = 'family-name'; b.maxLength = 40; b.required = true;
+  a.value = store.get('quiz.first') || '';
+  b.value = store.get('quiz.last') || '';
+  const err = h('p', K.err, msg || '');
+  const go = h('button', U.btn('primary', 'block'), t('pl.go'));
+  go.type = 'submit';
+  f.append(a, b, err, go);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    go.disabled = true;
+    err.textContent = '';
+    try {
+      await join(a.value, b.value);
+    } catch (er) {
+      err.textContent = er.message;
+      go.disabled = false;
+    }
+  };
+  c.append(f);
+  screen.append(c);
+  a.focus();
+}
+
+async function join(first, last) {
+  const r = await fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ first, last }) });
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* ignore */ }
+  if (!r.ok) throw new Error((j.code && I18N.has('err.' + j.code) ? t('err.' + j.code) : '') || t('err.join_fail'));
+  id = j.id;
+  store.set('quiz.id', id);
+  store.set('quiz.first', first.trim());
+  store.set('quiz.last', last.trim());
+  triedRejoin = false;
+  connect();
+}
+
+/* ---------- связь ---------- */
+
+let gen = 0; // номер текущего подключения: старые циклы опроса сами останавливаются
+
+function handleState(st, my) {
+  if (my !== gen || st.hb) return;
+  S = st;
+  offset = S.now - Date.now();
+  $('#conn').hidden = true;
+  if (!S.me) {
+    gen++;
+    if (es) es.close();
+    const f = store.get('quiz.first'), l = store.get('quiz.last');
+    if (!triedRejoin && f && l) {
+      triedRejoin = true;
+      join(f, l).catch(() => { id = null; store.del('quiz.id'); showJoin(); });
+    } else {
+      id = null; store.del('quiz.id'); showJoin();
+    }
+    return;
+  }
+  triedRejoin = false;
+  render();
+}
+
+// Основной канал: поток событий (SSE). Если мобильная сеть или прокси его не пропускают,
+// через несколько секунд переходим на опрос сервера.
+let serverMode = '';
+const infoP = fetch('/api/info').then((r) => r.json()).then((j) => { serverMode = j.mode || ''; }).catch(() => {});
+function connect() {
+  gen++;
+  const my = gen;
+  infoP.then(() => { if (my === gen) openChannel(my); });
+}
+function openChannel(my) {
+  if (es) { es.close(); es = null; }
+  let lastMsg = 0;
+  let polling = false;
+  function startPoll() {
+    if (polling || my !== gen) return;
+    polling = true;
+    if (es) es.close();
+    (async function loop() {
+      if (my !== gen) return;
+      let d = 700;
+      try {
+        const r = await fetch('/api/state?role=player&id=' + encodeURIComponent(id), { cache: 'no-store' });
+        if (r.ok) { const j = await r.json(); if (j.poll) d = j.poll; lastMsg = Date.now(); $('#conn').hidden = true; handleState(j, my); } else $('#conn').hidden = false;
+      } catch (e) { $('#conn').hidden = false; }
+      setTimeout(loop, d);
+    })();
+  }
+  if (serverMode === 'poll') { startPoll(); return; }
+  if (!window.EventSource || /[?&]poll=1/.test(location.search)) { startPoll(); return; }
+  es = new EventSource('/events?role=player&id=' + encodeURIComponent(id));
+  es.onopen = () => { $('#conn').hidden = true; };
+  es.onerror = () => { $('#conn').hidden = false; };
+  es.onmessage = (ev) => { lastMsg = Date.now(); handleState(JSON.parse(ev.data), my); };
+  setTimeout(() => { if (!lastMsg) startPoll(); }, 5000);
+  const w = setInterval(() => {
+    if (my !== gen) { clearInterval(w); return; }
+    if (lastMsg && Date.now() - lastMsg > 25000) startPoll();
+  }, 5000);
+}
+
+/* ---------- экраны ---------- */
+
+function stats() {
+  const m = S.me;
+  const box = h('div', K.stats);
+  const s1 = h('div', K.stat); s1.append(h('b', K.statB, String(m.score)), h('span', K.statS, t('pts', { n: m.score })));
+  const s2 = h('div', K.stat); s2.append(h('b', K.statB, t('stat.of', { r: m.rank, n: S.playerCount })), h('span', K.statS, t('stat.place')));
+  box.append(s1, s2);
+  return box;
+}
+
+function render() {
+  const m = S.me;
+  let key;
+  if (S.phase === 'lobby') key = 'lobby';
+  else if (S.phase === 'question') key = 'q' + S.qIndex;
+  else key = S.phase + S.qIndex;
+
+  if (key !== curKey) {
+    curKey = key;
+    screen.replaceChildren();
+    screen.style.animation = 'none'; void screen.offsetWidth; screen.style.animation = '';
+    if (S.phase === 'lobby') buildLobby();
+    else if (S.phase === 'question') buildQuestion();
+    else if (S.phase === 'reveal') buildResult();
+    else if (S.phase === 'board') buildBoard();
+    else if (S.phase === 'final') buildFinal();
+  }
+  if (S.phase === 'lobby') {
+    const c = $('#lb-count');
+    if (c) c.textContent = t('pl.inRoom', { n: S.playerCount, w: t('participants', { n: S.playerCount }) });
+  } else if (S.phase === 'question') paintQuestion();
+}
+
+function buildLobby() {
+  const c = h('div', K.center);
+  c.append(h('h1', K.h1, t('pl.waitTitle', { name: S.me.name.split(' ')[0] })));
+  c.append(h('p', K.muted, t('pl.waitSub')));
+  const d = h('div', K.dots); K.dot.forEach((cl) => d.append(h('i', cl)));
+  const n = h('p', K.muted); n.id = 'lb-count';
+  c.append(d, n);
+  screen.append(c);
+}
+
+function buildQuestion() {
+  locked = false;
+  const q = S.question;
+  const top = h('div', K.qtop);
+  top.append(h('span', null, t('q.num', { x: S.qIndex + 1, n: S.total })));
+  const tm = h('span', K.timer + ' text-ink'); tm.id = 'p-sec';
+  top.append(tm);
+  const bar = h('div', K.tbar); const i = h('i', K.tfill); i.id = 'p-bar'; bar.append(i);
+  bar.style.setProperty('--n', q.seconds <= 30 ? q.seconds : Math.round(q.seconds / 5));
+  const txt = h('div', K.qtext, q.text);
+  const maxo = Math.max(...q.options.map((o) => o.length));
+  if (q.text.length > 220) txt.style.fontSize = '16px'; else if (q.text.length > 120) txt.style.fontSize = '18px';
+  const dense = maxo > 150 || q.options.length > 5;
+  const box = h('div', dense ? 'grid gap-[9px]' : 'grid gap-3'); box.id = 'p-ans';
+  q.options.forEach((o, idx) => {
+    const b = h('button', 'relative flex w-full cursor-pointer items-center text-left leading-tight font-extrabold text-ink transition duration-100 enabled:active:translate-y-[5px] enabled:active:shadow-[0_0_0_var(--color-ink)] disabled:cursor-default ' +
+      'rounded-2xl border-ink bg-white shadow-[0_5px_0_var(--color-ink)] data-[picked]:border-blue data-[picked]:bg-[#eaf0ff] data-[picked]:shadow-[0_5px_0_var(--color-blue)] data-[dim]:opacity-35 ' +
+      (dense ? 'min-h-14 gap-[0.7em] border-2 px-[0.8em] py-[0.6em] text-[0.95rem]' : 'min-h-[74px] gap-[0.8em] border-[3px] px-4 py-[0.8em] text-[1.1rem]'));
+    b.type = 'button';
+    b.append(h('span', U.letter + ' min-w-[2.2em] rounded-[10px] px-[0.3em] h-[2em] text-[0.85em] text-white ' + U.optBg[idx], LET[idx] + ')'), h('span', 'min-w-0 flex-1 [overflow-wrap:anywhere]', o));
+    b.onclick = () => answer(idx);
+    box.append(b);
+  });
+  const st = h('p', K.status); st.id = 'p-status';
+  screen.append(top, bar, txt, box, st);
+  paintQuestion();
+}
+
+function timeLeft() { return Math.max(0, S.endsAt - (Date.now() + offset)); }
+
+function paintQuestion() {
+  const box = $('#p-ans');
+  if (!box) return;
+  const picked = S.me.choice;
+  const up = timeLeft() <= 0;
+  Array.from(box.children).forEach((b, i) => {
+    b.disabled = picked != null || up;
+    b.toggleAttribute('data-picked', picked === i);
+    b.toggleAttribute('data-dim', picked != null && picked !== i);
+  });
+  const st = $('#p-status');
+  if (picked != null) st.textContent = t('pl.accepted');
+  else if (up) st.textContent = t('pl.timeup');
+  else if (!st.dataset.note) st.textContent = t('pl.pick');
+}
+
+async function answer(i) {
+  if (locked || S.me.choice != null || timeLeft() <= 0) return;
+  locked = true;
+  S.me.choice = i;
+  paintQuestion();
+  try {
+    const r = await fetch('/api/answer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, choice: i }) });
+    if (!r.ok) {
+      let j = {};
+      try { j = await r.json(); } catch (e) { /* ignore */ }
+      if (j.error === 'closed') { S.me.choice = null; note(t('pl.late')); } else if (j.error !== 'already') { S.me.choice = null; locked = false; note(t('pl.sendfail')); }
+      paintQuestion();
+    }
+  } catch (e) {
+    S.me.choice = null; locked = false; note(t('pl.offline')); paintQuestion();
+  }
+}
+
+function note(msg) {
+  const st = $('#p-status');
+  if (!st) return;
+  st.dataset.note = '1';
+  st.textContent = msg;
+  setTimeout(() => { if (st) { delete st.dataset.note; } }, 2500);
+}
+
+function buildResult() {
+  const l = S.me.last;
+  let card;
+  if (!l || l.choice == null) {
+    card = h('div', K.card + ' bg-white');
+    card.append(h('div', K.icon + ' bg-bg', '…'), h('h2', K.h1 + ' text-[clamp(26px,8vw,38px)]', t('res.noneTitle')), h('p', K.sub, t('res.noneSub')));
+  } else if (l.correct) {
+    card = h('div', K.card + ' bg-good text-white');
+    card.append(h('div', K.icon + ' bg-white/25', '✓'), h('h2', K.h1 + ' text-[clamp(26px,8vw,38px)]', t('res.good')));
+    card.append(h('div', K.pts, '+' + l.points));
+    card.append(h('p', K.sub, t('res.pts', { p: l.points, n: l.points, w: t('pts', { n: l.points }), s: (l.ms / 1000).toFixed(1).replace('.', ',') })));
+  } else {
+    card = h('div', K.card + ' bg-bad text-white');
+    card.append(h('div', K.icon + ' bg-white/25', '✕'), h('h2', K.h1 + ' text-[clamp(26px,8vw,38px)]', t('res.bad')));
+    card.append(h('p', K.sub, t('res.right', { a: S.question.options[S.correct] })));
+  }
+  screen.append(card, stats(), h('p', K.status + ' text-muted', t('res.watch')));
+}
+
+function buildBoard() {
+  const c = h('div', K.center);
+  c.append(h('p', K.kicker, t('pl.boardKicker')), h('h1', K.h1, t('pl.boardLook')));
+  c.append(h('div', K.place, String(S.me.rank)));
+  c.append(h('p', K.muted, t('pl.boardPlace', { n: S.playerCount })));
+  screen.append(c, stats());
+}
+
+function buildFinal() {
+  const m = S.me;
+  const c = h('div', K.center + ' text-center');
+  c.append(h('p', K.kicker, t('pl.finalKicker')));
+  c.append(h('div', K.place, String(m.rank)));
+  c.append(h('p', K.muted, t('pl.finalPlace', { n: S.playerCount })));
+  c.append(h('h1', K.h1, m.rank <= 3 ? t('pl.podium') : t('pl.thanks')));
+  screen.append(c, stats());
+}
+
+function tick() {
+  if (S && S.phase === 'question') {
+    const sec = $('#p-sec');
+    if (sec) {
+      const rem = timeLeft();
+      sec.textContent = Math.ceil(rem / 1000);
+      sec.classList.toggle('text-bad', rem < 5000);
+      sec.classList.toggle('text-ink', rem >= 5000);
+      $('#p-bar').style.transform = 'scaleX(' + (rem / (S.question.seconds * 1000)) + ')';
+      if (rem <= 0 && S.me.choice == null) paintQuestion();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function relang() {
+  document.title = t('player.title');
+  I18N.apply();
+  curKey = null;
+  if (S && S.me && id) render(); else if (!id) showJoin();
+}
+function paintLang() { $('#lang-slot').replaceChildren(I18N.switcher(() => { paintLang(); relang(); })); }
+document.title = t('player.title');
+I18N.apply();
+paintLang();
+if (id) connect(); else showJoin();
+})();
+</script>
+</body>
+</html>

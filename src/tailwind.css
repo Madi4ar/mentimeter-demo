@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+/* Tailwind сам находит классы в этих файлах */
+@source "../public/host.html";
+@source "../public/player.html";
+@source "../public/ui.js";
+@source "../public/i18n.js";
+
+/* STEM AI Innovation: лабораторная бумага в клетку, чернильный и синий цвета,
+   оранжевая «искра» для акцентов, подписи моноширинным шрифтом как на приборах. */
+@theme {
+  --color-bg: #eef3fa;
+  --color-grid: #dae4f1;
+  --color-ink: #0a1733;
+  --color-muted: #4a5b78;
+  --color-line: #c5d3e6;
+  --color-blue: #2447ff;
+  --color-orange: #f04e0f;
+  --color-teal: #008f80;
+  --color-pink: #d6307f;
+  --color-good: #0f9d62;
+  --color-good-bg: #d8f5e7;
+  --color-bad: #e0314b;
+  --color-c4: #7a3df5;
+  --color-c5: #0a8fd6;
+  --color-c6: #c47a00;
+  --color-c7: #4a5b78;
+
+  --font-display: 'Exo 2', 'Arial Black', system-ui, sans-serif;
+  --font-body: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, 'Courier New', monospace;
+
+  --animate-pop: pop 0.35s ease;
+  --animate-rise: rise 0.45s ease both;
+  --animate-fade: fade 0.3s ease;
+  --animate-dot: dot 1.2s infinite ease-in-out;
+
+  @keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
+  @keyframes rise { from { transform: translateY(18px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes dot { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+}
+
+@layer base {
+  html, body { height: 100%; }
+  body {
+    background-color: var(--color-bg);
+    background-image:
+      linear-gradient(var(--color-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-attachment: fixed;
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--color-blue); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+/* линейка времени: каждая засечка равна одной секунде (число засечек в --n) */
+@utility ruler {
+  --n: 20;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(90deg, transparent 0, transparent calc(100% / var(--n) - 2px), rgba(10, 23, 51, 0.4) calc(100% / var(--n) - 2px), rgba(10, 23, 51, 0.4) calc(100% / var(--n)));
+  }
+}
