@@ -9,7 +9,7 @@
 Vercel не держит сервер «включённым», поэтому в этой версии состояние игры лежит в бесплатной базе Redis (Upstash), а телефоны и экран ведущего опрашивают `/api/state` раз в 1–2 секунды. Локальные `START.bat` / `server.js` продолжают работать как раньше.
 
 1. Загрузите папку на GitHub (репозиторий можно сделать приватным) и на https://vercel.com нажмите **Add New → Project**, выберите репозиторий. Настройки сборки менять не нужно.
-2. В проекте откройте **Storage → Create Database → Upstash for Redis** (Marketplace), бесплатный план, регион ближе к вашим участникам (например, Frankfurt). Нажмите **Connect Project**: переменные `KV_REST_API_URL` и `KV_REST_API_TOKEN` добавятся сами.
+2. В проекте откройте **Storage → Create Database → Upstash for Redis** (Marketplace), бесплатный план, регион ближе к вашим участникам (например, Frankfurt). Нажмите **Connect Project**: переменные `KV_REST_API_URL` и `KV_REST_API_TOKEN` добавятся сами. Подойдёт и **Redis** (Redis Cloud): он добавляет `REDIS_URL`, код понимает и его.
 3. **Settings → Environment Variables**: добавьте `HOST_PIN` = ваш PIN для ведущего (по умолчанию 1234, обязательно смените).
 4. **Deployments → Redeploy** (чтобы переменные подхватились).
 5. Участники открывают `https://ваш-проект.vercel.app`, ведущий — `https://ваш-проект.vercel.app/host`. QR-код на экране ведущего уже ведёт на нужный адрес. Мобильный интернет работает без туннелей.
